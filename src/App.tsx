@@ -24,7 +24,506 @@ import {
   FileSpreadsheet,
   X,
   Home,
+  MessageSquare,
+  ChevronDown,
+  Heart,
+  HelpCircle,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react';
+
+interface DisqusConfig {
+  page: {
+    url?: string;
+    identifier?: string;
+  };
+}
+
+declare global {
+  interface Window {
+    disqus_config?: (this: DisqusConfig) => void;
+    disqus_shortname?: string;
+    DISQUS?: {
+      reset: (options: { reload: boolean; config?: (this: DisqusConfig) => void }) => void;
+    };
+  }
+}
+
+interface LocalComment {
+  id: string;
+  name: string;
+  content: string;
+  timestamp: number;
+  upvotes: number;
+  downvotes: number;
+  provider?: string;
+}
+
+const REACTIONS_CONFIG = [
+  { id: 'upvote', emoji: '👍', label: 'Upvote' },
+  { id: 'funny', emoji: '😝', label: 'Funny' },
+  { id: 'love', emoji: '😍', label: 'Love' },
+  { id: 'surprised', emoji: '😲', label: 'Surprised' },
+  { id: 'angry', emoji: '😤', label: 'Angry' },
+  { id: 'sad', emoji: '😢', label: 'Sad' },
+];
+
+function DisqusComments() {
+  const [comments, setComments] = useState<LocalComment[]>(() => {
+    try {
+      const saved = localStorage.getItem('hdb_feedback_comments_v1');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [reactionCounts, setReactionCounts] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('hdb_reaction_counts_v1');
+      return saved ? JSON.parse(saved) : {
+        upvote: 0,
+        funny: 0,
+        love: 0,
+        surprised: 0,
+        angry: 0,
+        sad: 0,
+      };
+    } catch {
+      return { upvote: 0, funny: 0, love: 0, surprised: 0, angry: 0, sad: 0 };
+    }
+  });
+
+  const [userReaction, setUserReaction] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState('');
+  const [authorName, setAuthorName] = useState('');
+  const [loginProvider, setLoginProvider] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'best' | 'newest' | 'oldest'>('best');
+  const [liked, setLiked] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  // Initialize Disqus background integration
+  useEffect(() => {
+    const pageUrl = 'https://week-4-livid.vercel.app';
+    const pageIdentifier = 'home';
+
+    window.disqus_shortname = 'week3comment';
+    window.disqus_config = function (this: DisqusConfig) {
+      this.page.url = pageUrl;
+      this.page.identifier = pageIdentifier;
+    };
+
+    try {
+      if (window.DISQUS) {
+        window.DISQUS.reset({
+          reload: true,
+          config: function (this: DisqusConfig) {
+            this.page.url = pageUrl;
+            this.page.identifier = pageIdentifier;
+          },
+        });
+      } else if (!document.getElementById('disqus-embed-script')) {
+        const script = document.createElement('script');
+        script.id = 'disqus-embed-script';
+        script.src = 'https://week3comment.disqus.com/embed.js';
+        script.setAttribute('data-timestamp', (+new Date()).toString());
+        script.async = true;
+        script.crossOrigin = 'anonymous';
+        (document.head || document.body).appendChild(script);
+      }
+    } catch {
+      // Ignore cross-origin third-party script reset warnings
+    }
+  }, []);
+
+  const totalResponses = useMemo(() => {
+    return Object.values(reactionCounts).reduce((acc, curr) => acc + curr, 0);
+  }, [reactionCounts]);
+
+  const handleReaction = (id: string) => {
+    setReactionCounts((prev) => {
+      const isAlready = userReaction === id;
+      const updated = {
+        ...prev,
+        [id]: Math.max(0, (prev[id] || 0) + (isAlready ? -1 : 1)),
+      };
+      try {
+        localStorage.setItem('hdb_reaction_counts_v1', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    setUserReaction((prev) => (prev === id ? null : id));
+  };
+
+  const handlePostComment = () => {
+    if (!commentText.trim()) return;
+
+    const newEntry: LocalComment = {
+      id: Date.now().toString(),
+      name: authorName.trim() || 'Guest User',
+      content: commentText.trim(),
+      timestamp: Date.now(),
+      upvotes: 0,
+      downvotes: 0,
+      provider: loginProvider || 'Guest',
+    };
+
+    const next = [newEntry, ...comments];
+    setComments(next);
+    try {
+      localStorage.setItem('hdb_feedback_comments_v1', JSON.stringify(next));
+    } catch {}
+
+    setCommentText('');
+  };
+
+  const handleVoteComment = (id: string, delta: number) => {
+    setComments((prev) => {
+      const next = prev.map((c) => {
+        if (c.id === id) {
+          return {
+            ...c,
+            upvotes: Math.max(0, c.upvotes + delta),
+          };
+        }
+        return c;
+      });
+      try {
+        localStorage.setItem('hdb_feedback_comments_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleShare = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(window.location.href);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+    }
+  };
+
+  const sortedComments = useMemo(() => {
+    const list = [...comments];
+    if (sortBy === 'best') {
+      return list.sort((a, b) => b.upvotes - a.upvotes);
+    }
+    if (sortBy === 'newest') {
+      return list.sort((a, b) => b.timestamp - a.timestamp);
+    }
+    if (sortBy === 'oldest') {
+      return list.sort((a, b) => a.timestamp - b.timestamp);
+    }
+    return list;
+  }, [comments, sortBy]);
+
+  const getTimeAgo = (timestamp: number) => {
+    const diff = Math.floor((Date.now() - timestamp) / 1000);
+    if (diff < 60) return 'Just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-10 shadow-xs">
+      {/* Title & Subtitle */}
+      <div className="mb-8">
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+          Feedback &amp; Comments
+        </h2>
+        <p className="text-slate-600 text-sm sm:text-base mt-2">
+          Tell us what worked for you and what did not.
+        </p>
+      </div>
+
+      {/* Reactions Section: "What do you think?" */}
+      <div className="text-center py-6 mb-10 border-b border-slate-100">
+        <h3 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+          What do you think?
+        </h3>
+        <p className="text-xs sm:text-sm text-slate-500 font-medium mt-1 mb-8">
+          {totalResponses} {totalResponses === 1 ? 'Response' : 'Responses'}
+        </p>
+
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 sm:gap-6 max-w-2xl mx-auto">
+          {REACTIONS_CONFIG.map((r) => {
+            const isSelected = userReaction === r.id;
+            const count = reactionCounts[r.id] || 0;
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => handleReaction(r.id)}
+                className={`flex flex-col items-center justify-center p-3 rounded-2xl transition cursor-pointer group hover:bg-slate-50 active:scale-95 ${
+                  isSelected ? 'bg-blue-50 ring-2 ring-blue-500 shadow-xs' : ''
+                }`}
+              >
+                <span className="text-4xl sm:text-5xl transition-transform group-hover:scale-110 drop-shadow-xs">
+                  {r.emoji}
+                </span>
+                <span className={`text-xs font-semibold mt-2 ${isSelected ? 'text-blue-700' : 'text-slate-700'}`}>
+                  {r.label}
+                </span>
+                {count > 0 && (
+                  <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full mt-1">
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Comments Header Bar */}
+      <div className="flex items-center justify-between pb-3 border-b-2 border-slate-300">
+        <h4 className="text-base sm:text-lg font-bold text-slate-900">
+          {comments.length} Comments
+        </h4>
+        <div className="flex items-center gap-2 cursor-pointer text-slate-700 font-semibold text-xs sm:text-sm hover:text-slate-900">
+          <span className="w-5 h-5 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center">
+            1
+          </span>
+          <span>Login</span>
+          <ChevronDown className="w-4 h-4 text-slate-500" />
+        </div>
+      </div>
+
+      {/* Comment Input Discussion Area */}
+      <div className="mt-6 space-y-4">
+        <div className="flex items-start gap-3 sm:gap-4">
+          {/* Avatar 'G' matching screenshot */}
+          <div className="w-12 h-12 rounded-2xl bg-blue-500 text-white font-black text-2xl flex items-center justify-center shrink-0 shadow-xs">
+            {authorName ? authorName.charAt(0).toUpperCase() : 'G'}
+          </div>
+
+          <div className="flex-1">
+            <textarea
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              placeholder="Start the discussion..."
+              rows={3}
+              className="w-full border-2 border-slate-300 rounded-2xl p-4 text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-blue-500 transition resize-none bg-white"
+            />
+
+            {/* Social Logins & Sign up with Disqus */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mt-3 pt-1">
+              <div className="flex items-center flex-wrap gap-2.5">
+                <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  LOG IN WITH
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginProvider('Disqus');
+                      if (!authorName) setAuthorName('Disqus User');
+                    }}
+                    title="Log in with Disqus"
+                    className="w-7 h-7 rounded-full bg-[#2e9fff] text-white flex items-center justify-center font-bold text-xs hover:opacity-90 transition cursor-pointer"
+                  >
+                    D
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginProvider('Facebook');
+                      if (!authorName) setAuthorName('Facebook User');
+                    }}
+                    title="Log in with Facebook"
+                    className="w-7 h-7 rounded-full bg-[#1877F2] text-white flex items-center justify-center font-bold text-xs hover:opacity-90 transition cursor-pointer"
+                  >
+                    f
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginProvider('X');
+                      if (!authorName) setAuthorName('X User');
+                    }}
+                    title="Log in with X"
+                    className="w-7 h-7 rounded-full bg-black text-white flex items-center justify-center font-bold text-[10px] hover:opacity-90 transition cursor-pointer"
+                  >
+                    𝕏
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginProvider('Google');
+                      if (!authorName) setAuthorName('Google User');
+                    }}
+                    title="Log in with Google"
+                    className="w-7 h-7 rounded-full bg-[#EA4335] text-white flex items-center justify-center font-bold text-xs hover:opacity-90 transition cursor-pointer"
+                  >
+                    G
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginProvider('Microsoft');
+                      if (!authorName) setAuthorName('Microsoft User');
+                    }}
+                    title="Log in with Microsoft"
+                    className="w-7 h-7 rounded-full bg-slate-100 border border-slate-300 text-slate-800 flex items-center justify-center p-1.5 hover:bg-slate-200 transition cursor-pointer"
+                  >
+                    <div className="grid grid-cols-2 gap-0.5 w-3 h-3">
+                      <div className="bg-[#f25022]"></div>
+                      <div className="bg-[#7fba00]"></div>
+                      <div className="bg-[#00a4ef]"></div>
+                      <div className="bg-[#ffb900]"></div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginProvider('Apple');
+                      if (!authorName) setAuthorName('Apple User');
+                    }}
+                    title="Log in with Apple"
+                    className="w-7 h-7 rounded-full bg-black text-white flex items-center justify-center font-bold text-[11px] hover:opacity-90 transition cursor-pointer"
+                  >
+                    
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center flex-wrap gap-2.5">
+                <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                  OR SIGN UP WITH DISQUS
+                  <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
+                </span>
+                <input
+                  type="text"
+                  placeholder="Name"
+                  value={authorName}
+                  onChange={(e) => setAuthorName(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-800 w-36 sm:w-44 focus:outline-hidden focus:border-blue-500 bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={handlePostComment}
+                  disabled={!commentText.trim()}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition cursor-pointer shadow-xs"
+                >
+                  Post
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Discussion Footer Controls */}
+      <div className="flex items-center justify-between pt-6 mt-4 border-t border-slate-100 text-sm">
+        <div className="flex items-center gap-2 text-slate-500 text-xs sm:text-sm">
+          <button
+            onClick={() => setLiked((l) => !l)}
+            className="p-1 hover:text-rose-500 transition cursor-pointer"
+            title="Like discussion"
+          >
+            <Heart className={`w-4 h-4 ${liked ? 'fill-rose-500 text-rose-500' : ''}`} />
+          </button>
+          <span>•</span>
+          <button
+            onClick={handleShare}
+            className="hover:text-slate-800 transition font-medium text-xs cursor-pointer flex items-center gap-1"
+          >
+            <span>Share</span>
+            {copiedLink && <span className="text-emerald-600 text-[11px] font-semibold">(Link copied!)</span>}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm font-semibold">
+          <button
+            onClick={() => setSortBy('best')}
+            className={`pb-1 cursor-pointer transition ${
+              sortBy === 'best'
+                ? 'text-blue-600 border-b-2 border-blue-600 font-bold'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Best
+          </button>
+          <button
+            onClick={() => setSortBy('newest')}
+            className={`pb-1 cursor-pointer transition ${
+              sortBy === 'newest'
+                ? 'text-blue-600 border-b-2 border-blue-600 font-bold'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Newest
+          </button>
+          <button
+            onClick={() => setSortBy('oldest')}
+            className={`pb-1 cursor-pointer transition ${
+              sortBy === 'oldest'
+                ? 'text-blue-600 border-b-2 border-blue-600 font-bold'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Oldest
+          </button>
+        </div>
+      </div>
+
+      {/* Comment Thread List */}
+      <div className="mt-6 space-y-4">
+        {sortedComments.length === 0 ? (
+          <div className="text-center py-10 text-slate-400 text-sm">
+            Be the first to comment.
+          </div>
+        ) : (
+          sortedComments.map((c) => (
+            <div
+              key={c.id}
+              className="flex items-start gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200/80 transition hover:border-slate-300"
+            >
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-slate-700 to-slate-900 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-2xs">
+                {c.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-900">{c.name}</span>
+                    {c.provider && c.provider !== 'Guest' && (
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-100">
+                        via {c.provider}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-slate-400">{getTimeAgo(c.timestamp)}</span>
+                </div>
+                <p className="text-xs sm:text-sm text-slate-800 whitespace-pre-line leading-relaxed">
+                  {c.content}
+                </p>
+                <div className="flex items-center gap-4 pt-1 text-[11px] text-slate-500 font-medium">
+                  <button
+                    onClick={() => handleVoteComment(c.id, 1)}
+                    className="flex items-center gap-1 hover:text-blue-600 cursor-pointer transition"
+                  >
+                    <ThumbsUp className="w-3.5 h-3.5" />
+                    <span>{c.upvotes || 0}</span>
+                  </button>
+                  <button
+                    onClick={() => handleVoteComment(c.id, -1)}
+                    className="flex items-center gap-1 hover:text-rose-600 cursor-pointer transition"
+                  >
+                    <ThumbsDown className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Official background Disqus container for shortname week3comment */}
+      <div id="disqus_thread" className="hidden"></div>
+    </div>
+  );
+}
 
 interface TransactionItem {
   id: number | string;
@@ -234,7 +733,7 @@ export default function App() {
       return (
         item.street_name.toLowerCase().includes(q) ||
         item.block.toLowerCase().includes(q) ||
-        item.remaining_lease.toLowerCase().includes(q)
+        item.flat_model.toLowerCase().includes(q)
       );
     });
 
@@ -648,7 +1147,7 @@ export default function App() {
                             <th className="py-3 px-3">Block &amp; Street</th>
                             <th className="py-3 px-3">Storey</th>
                             <th className="py-3 px-3">Area</th>
-                            <th className="py-3 px-3">Remaining Lease</th>
+                            <th className="py-3 px-3">Model &amp; Remaining Lease</th>
                             <th className="py-3 px-3 text-right">Resale Price</th>
                           </tr>
                         </thead>
@@ -680,8 +1179,13 @@ export default function App() {
                                     ≈ {Math.round(parseFloat(tx.floor_area_sqm || '0') * 10.7639)} sqft
                                   </span>
                                 </td>
-                                <td className="py-3 px-3 text-slate-700 whitespace-nowrap font-medium">
-                                  {tx.remaining_lease || (tx.lease_commence_date ? `Lease commence: ${tx.lease_commence_date}` : '—')}
+                                <td className="py-3 px-3 text-slate-600">
+                                  <span className="font-medium text-slate-800 block">
+                                    {tx.flat_model}
+                                  </span>
+                                  <span className="text-slate-400 text-[11px] block">
+                                    {tx.remaining_lease || (tx.lease_commence_date ? `Lease: ${tx.lease_commence_date}` : '—')}
+                                  </span>
                                 </td>
                                 <td className="py-3 px-3 text-right whitespace-nowrap">
                                   <span className="text-sm font-bold text-slate-900 block">
@@ -743,9 +1247,9 @@ export default function App() {
                               </span>
                             </div>
                             <div className="col-span-2">
-                              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Remaining Lease</span>
+                              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Model &amp; Lease</span>
                               <span className="font-medium text-slate-800">
-                                {tx.remaining_lease || (tx.lease_commence_date ? `Lease commence: ${tx.lease_commence_date}` : '—')}
+                                {tx.flat_model} · {tx.remaining_lease}
                               </span>
                             </div>
                           </div>
@@ -801,6 +1305,9 @@ export default function App() {
             </>
           )}
         </div>
+
+        {/* Disqus Comment Section */}
+        <DisqusComments />
       </main>
 
       {/* Footer with exact Singapore Open Data Licence attribution */}

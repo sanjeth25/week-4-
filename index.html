@@ -9,6 +9,25 @@
     <meta property="og:description" content="Real-time median resale flat price explorer for Singapore HDB towns and flat types, powered by official data.gov.sg datasets." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Suppress cross-origin third-party script errors (e.g. Disqus tracker/iframe restrictions)
+      window.addEventListener('error', function (event) {
+        if (
+          event.message === 'Script error.' ||
+          (event.filename && (event.filename.indexOf('disqus') !== -1 || event.filename.indexOf('disquscdn') !== -1))
+        ) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+          return true;
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function (event) {
+        if (event.reason && (event.reason.message === 'Script error.' || String(event.reason).indexOf('disqus') !== -1)) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+        }
+      }, true);
+    </script>
   </head>
   <body>
     <div id="root"></div>
